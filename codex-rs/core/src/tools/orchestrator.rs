@@ -44,6 +44,7 @@ pub(crate) struct ToolOrchestrator {
 pub(crate) struct OrchestratorRunResult<Out> {
     pub output: Out,
     pub deferred_network_approval: Option<DeferredNetworkApproval>,
+    pub sandbox_outcome: Option<&'static str>,
 }
 
 impl ToolOrchestrator {
@@ -258,6 +259,7 @@ impl ToolOrchestrator {
                 Ok(OrchestratorRunResult {
                     output: out,
                     deferred_network_approval: first_deferred_network_approval,
+                    sandbox_outcome: None,
                 })
             }
             Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
@@ -374,6 +376,7 @@ impl ToolOrchestrator {
                 retry_result.map(|output| OrchestratorRunResult {
                     output,
                     deferred_network_approval: retry_deferred_network_approval,
+                    sandbox_outcome: Some("denied"),
                 })
             }
             Err(err) => Err(err),

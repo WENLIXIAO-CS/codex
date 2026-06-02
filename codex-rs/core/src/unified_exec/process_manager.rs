@@ -586,6 +586,7 @@ impl UnifiedExecProcessManager {
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(request.hook_command.clone()),
+            sandbox_outcome: None,
         };
 
         Ok(response)
@@ -730,6 +731,7 @@ impl UnifiedExecProcessManager {
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(hook_command),
+            sandbox_outcome: None,
         };
 
         Ok(response)

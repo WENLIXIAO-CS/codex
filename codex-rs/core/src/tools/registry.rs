@@ -322,6 +322,7 @@ impl ToolRegistry {
                     Duration::ZERO,
                     /*success*/ false,
                     &message,
+                    /*sandbox_outcome*/ None,
                     &metric_tags,
                     mcp_server_ref,
                     mcp_server_origin_ref,
@@ -341,6 +342,7 @@ impl ToolRegistry {
                 Duration::ZERO,
                 /*success*/ false,
                 &message,
+                /*sandbox_outcome*/ None,
                 &metric_tags,
                 mcp_server_ref,
                 mcp_server_origin_ref,
@@ -391,9 +393,10 @@ impl ToolRegistry {
                             Ok(result) => {
                                 let preview = result.result.log_preview();
                                 let success = result.result.success_for_logging();
+                                let sandbox_outcome = result.result.sandbox_outcome_for_logging();
                                 let mut guard = response_cell.lock().await;
                                 *guard = Some(result);
-                                Ok((preview, success))
+                                Ok((preview, success, sandbox_outcome))
                             }
                             Err(err) => Err(err),
                         }
@@ -403,7 +406,7 @@ impl ToolRegistry {
             .await;
         let duration = started.elapsed();
         let (output_preview, success) = match &result {
-            Ok((preview, success)) => (preview.clone(), *success),
+            Ok((preview, success, _sandbox_outcome)) => (preview.clone(), *success),
             Err(err) => (err.to_string(), false),
         };
         emit_metric_for_tool_read(&invocation, success).await;

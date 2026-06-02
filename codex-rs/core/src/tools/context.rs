@@ -94,6 +94,10 @@ pub trait ToolOutput: Send {
 
     fn success_for_logging(&self) -> bool;
 
+    fn sandbox_outcome_for_logging(&self) -> Option<&'static str> {
+        None
+    }
+
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem;
 
     /// Returns the stable value exposed to `PostToolUse` hooks for this tool output.
@@ -256,6 +260,7 @@ pub struct FunctionToolOutput {
     pub body: Vec<FunctionCallOutputContentItem>,
     pub success: Option<bool>,
     pub post_tool_use_response: Option<JsonValue>,
+    pub sandbox_outcome: Option<&'static str>,
 }
 
 impl FunctionToolOutput {
@@ -264,6 +269,7 @@ impl FunctionToolOutput {
             body: vec![FunctionCallOutputContentItem::InputText { text }],
             success,
             post_tool_use_response: None,
+            sandbox_outcome: None,
         }
     }
 
@@ -275,6 +281,7 @@ impl FunctionToolOutput {
             body: content,
             success,
             post_tool_use_response: None,
+            sandbox_outcome: None,
         }
     }
 
@@ -292,6 +299,10 @@ impl ToolOutput for FunctionToolOutput {
 
     fn success_for_logging(&self) -> bool {
         self.success.unwrap_or(true)
+    }
+
+    fn sandbox_outcome_for_logging(&self) -> Option<&'static str> {
+        self.sandbox_outcome
     }
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
@@ -391,6 +402,7 @@ pub struct ExecCommandToolOutput {
     pub exit_code: Option<i32>,
     pub original_token_count: Option<usize>,
     pub hook_command: Option<String>,
+    pub sandbox_outcome: Option<&'static str>,
 }
 
 impl ToolOutput for ExecCommandToolOutput {
@@ -400,6 +412,10 @@ impl ToolOutput for ExecCommandToolOutput {
 
     fn success_for_logging(&self) -> bool {
         true
+    }
+
+    fn sandbox_outcome_for_logging(&self) -> Option<&'static str> {
+        self.sandbox_outcome
     }
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {

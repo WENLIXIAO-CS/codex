@@ -35,7 +35,11 @@ use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use crate::tools::sandboxing::ToolCtx;
+use crate::tools::sandboxing::ToolError;
 use codex_features::Feature;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::SandboxErr;
+use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_shell_command::is_safe_command::is_known_safe_command;
@@ -736,8 +740,7 @@ impl ShellHandler {
                 &turn,
                 turn.approval_policy.value(),
             )
-            .await
-            .map(|result| result.output);
+            .await;
         let event_ctx = ToolEventCtx::new(
             session.as_ref(),
             turn.as_ref(),
@@ -747,16 +750,34 @@ impl ShellHandler {
         let post_tool_use_response = out
             .as_ref()
             .ok()
-            .map(|output| crate::tools::format_exec_output_str(output, turn.truncation_policy))
+            .map(|result| {
+                crate::tools::format_exec_output_str(&result.output, turn.truncation_policy)
+            })
             .map(JsonValue::String);
-        let content = emitter.finish(event_ctx, out).await?;
+        let sandbox_outcome = sandbox_outcome_from_exec_result(&out);
+        let content = emitter
+            .finish(event_ctx, out.map(|result| result.output))
+            .await?;
         Ok(FunctionToolOutput {
             body: vec![
                 codex_protocol::models::FunctionCallOutputContentItem::InputText { text: content },
             ],
             success: Some(true),
             post_tool_use_response,
+            sandbox_outcome,
         })
+    }
+}
+
+fn sandbox_outcome_from_exec_result(
+    out: &Result<crate::tools::orchestrator::OrchestratorRunResult<ExecToolCallOutput>, ToolError>,
+) -> Option<&'static str> {
+    match out {
+        Ok(result) => result.sandbox_outcome,
+        Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied { .. }))) => Some("denied"),
+        Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { .. }))) => Some("timed_out"),
+        Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Signal(_)))) => Some("signal"),
+        Err(ToolError::Rejected(_)) | Err(ToolError::Codex(_)) => None,
     }
 }
 

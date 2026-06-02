@@ -321,6 +321,7 @@ impl ToolHandler for ExecCommandHandler {
                 exit_code: None,
                 original_token_count: None,
                 hook_command: None,
+                sandbox_outcome: None,
             });
         }
 
@@ -364,6 +365,7 @@ impl ToolHandler for ExecCommandHandler {
                     exit_code: Some(output.exit_code),
                     original_token_count: Some(original_token_count),
                     hook_command: Some(hook_command),
+                    sandbox_outcome: Some("denied"),
                 })
             }
             Err(err) => Err(FunctionCallError::RespondToModel(format!(

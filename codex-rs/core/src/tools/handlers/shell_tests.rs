@@ -278,6 +278,7 @@ async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
         body: vec![],
         success: Some(true),
         post_tool_use_response: Some(json!("shell output")),
+        sandbox_outcome: None,
     };
     let handler = ShellCommandHandler {
         backend: super::ShellCommandBackend::Classic,
