@@ -882,6 +882,7 @@ jobs:
     uses: ./.github/workflows/rust-release-windows.yml
     with:
       release-lto: ${{ (github.event_name == 'pull_request' || github.ref_type == 'branch') && 'thin' || (contains(github.ref_name, '-alpha') && 'thin' || 'fat') }}
+    secrets: inherit
 
   argument-comment-lint-release-assets:
     # Temporarily disabled while this PR smoke-tests the Windows signing flow.
