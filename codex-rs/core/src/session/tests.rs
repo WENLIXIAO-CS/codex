@@ -1597,6 +1597,7 @@ async fn reconstruct_history_matches_live_compactions() {
         .await;
 
     assert_eq!(expected, reconstructed.history);
+    assert_eq!(reconstructed.window_generation, 2);
 }
 
 #[tokio::test]
@@ -1631,6 +1632,7 @@ async fn reconstruct_history_uses_replacement_history_verbatim() {
         .await;
 
     assert_eq!(reconstructed.history, replacement_history);
+    assert_eq!(reconstructed.window_generation, 1);
 }
 
 #[tokio::test]
