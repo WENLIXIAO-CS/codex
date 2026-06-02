@@ -17,6 +17,13 @@ on:
   push:
     tags:
       - "rust-v*.*.*"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/rust-release.yml"
+      - ".github/workflows/rust-release-windows.yml"
+      - ".github/actions/windows-code-sign/**"
   workflow_dispatch:
     inputs:
       release_mode:
@@ -46,7 +53,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.number || 'release' }}
   cancel-in-progress: true
 
 jobs:
@@ -67,6 +74,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Tag validation"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            echo "PR smoke run; skipping release tag validation."
+            echo "::endgroup::"
+            exit 0
+          fi
 
           case "${RELEASE_MODE}" in
             signed)
@@ -132,7 +145,8 @@ jobs:
           echo "::endgroup::"
 
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode != 'promote_signed' }}
+    # Temporarily disabled while this PR smoke-tests the Windows signing flow.
+    if: ${{ false && (github.event_name != 'workflow_dispatch' || inputs.release_mode != 'promote_signed') }}
     needs: tag-check
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }} - ${{ matrix.bundle }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
@@ -621,7 +635,8 @@ jobs:
             codex-rs/dist/${{ matrix.target }}/*
 
   stage-signed-macos:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_mode == 'promote_signed' }}
+    # Temporarily disabled while this PR smoke-tests the Windows signing flow.
+    if: ${{ false && github.event_name == 'workflow_dispatch' && inputs.release_mode == 'promote_signed' }}
     needs: tag-check
     name: Stage signed macOS handoff - ${{ matrix.target }} - ${{ matrix.bundle }}
     runs-on: macos-15-xlarge
@@ -864,10 +879,11 @@ jobs:
     needs: tag-check
     uses: ./.github/workflows/rust-release-windows.yml
     with:
-      release-lto: ${{ contains(github.ref_name, '-alpha') && 'thin' || 'fat' }}
+      release-lto: ${{ github.event_name == 'pull_request' && 'thin' || (contains(github.ref_name, '-alpha') && 'thin' || 'fat') }}
 
   argument-comment-lint-release-assets:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode != 'promote_signed' }}
+    # Temporarily disabled while this PR smoke-tests the Windows signing flow.
+    if: ${{ false && (github.event_name != 'workflow_dispatch' || inputs.release_mode != 'promote_signed') }}
     name: argument-comment-lint release assets
     needs: tag-check
     uses: ./.github/workflows/rust-release-argument-comment-lint.yml
@@ -875,7 +891,8 @@ jobs:
       publish: true
 
   zsh-release-assets:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.release_mode != 'promote_signed' }}
+    # Temporarily disabled while this PR smoke-tests the Windows signing flow.
+    if: ${{ false && (github.event_name != 'workflow_dispatch' || inputs.release_mode != 'promote_signed') }}
     name: zsh release assets
     needs: tag-check
     uses: ./.github/workflows/rust-release-zsh.yml
@@ -891,6 +908,7 @@ jobs:
     if: >-
       ${{
         always() &&
+        false &&
         needs.tag-check.result == 'success' &&
         (
           (
@@ -1283,6 +1301,7 @@ jobs:
     # success() check to the whole dependency chain before evaluating release outputs.
     if: >-
       ${{
+        false &&
         !cancelled() &&
         needs.release.result == 'success' &&
         needs.release.outputs.should_publish_npm == 'true'
@@ -1446,6 +1465,7 @@ jobs:
     # Publish to PyPI for stable releases and alpha pre-releases with numeric suffixes.
     if: >-
       ${{
+        false &&
         !cancelled() &&
         needs.release.result == 'success' &&
         needs.release.outputs.should_publish_python_runtime == 'true'
@@ -1492,6 +1512,7 @@ jobs:
     # The deploy updates developers.openai.com with the new config schema json file.
     if: >-
       ${{
+        false &&
         !cancelled() &&
         needs.release.result == 'success' &&
         needs.release.outputs.sign_macos == 'true' &&
@@ -1522,6 +1543,7 @@ jobs:
     # '-' in the semver string (e.g., 1.2.3-alpha.1).
     if: >-
       ${{
+        false &&
         !cancelled() &&
         needs.release.result == 'success' &&
         needs.release.outputs.sign_macos == 'true' &&
@@ -1548,6 +1570,7 @@ jobs:
     name: Update latest-alpha-cli branch
     if: >-
       ${{
+        false &&
         !cancelled() &&
         needs.release.result == 'success' &&
         needs.release.outputs.sign_macos == 'true'
