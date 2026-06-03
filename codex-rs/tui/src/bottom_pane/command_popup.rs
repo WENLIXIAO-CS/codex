@@ -448,6 +448,10 @@ mod tests {
             !cmds.iter().any(|cmd| cmd == "plan"),
             "expected '/plan' to be hidden when collaboration modes are disabled, got {cmds:?}"
         );
+        assert!(
+            !cmds.iter().any(|cmd| cmd == "blind"),
+            "expected '/blind' to be hidden when collaboration modes are disabled, got {cmds:?}"
+        );
     }
 
     #[test]
@@ -475,6 +479,15 @@ mod tests {
                 panic!("expected plan command, got service tier {command:?}")
             }
             other => panic!("expected plan to be selected for exact match, got {other:?}"),
+        }
+
+        popup.on_composer_text_change("/blind".to_string());
+        match popup.selected_item() {
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "blind"),
+            Some(CommandItem::ServiceTier(command)) => {
+                panic!("expected blind command, got service tier {command:?}")
+            }
+            other => panic!("expected blind to be selected for exact match, got {other:?}"),
         }
     }
 

@@ -30,8 +30,8 @@ pub enum UserInput {
         detail: Option<ImageDetail>,
     },
 
-    /// Local image path provided by the user.  This will be converted to an
-    /// `Image` variant (base64 data URL) during request serialization.
+    /// Local image path provided by the user. This is exposed to the model as
+    /// text so it can inspect the file through the `view_image` tool.
     LocalImage {
         path: std::path::PathBuf,
         #[serde(default, skip_serializing_if = "Option::is_none")]

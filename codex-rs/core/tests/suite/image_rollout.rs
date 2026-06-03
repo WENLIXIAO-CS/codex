@@ -1,6 +1,5 @@
 use anyhow::Context;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
@@ -26,7 +25,16 @@ use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::time::Duration;
 
-fn find_user_message_with_image(text: &str) -> Option<ResponseItem> {
+fn message_has_input_image(item: &ResponseItem) -> bool {
+    match item {
+        ResponseItem::Message { content, .. } => content
+            .iter()
+            .any(|span| matches!(span, ContentItem::InputImage { .. })),
+        _ => false,
+    }
+}
+
+fn find_user_message_with_text(text: &str, needle: &str) -> Option<ResponseItem> {
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -39,25 +47,15 @@ fn find_user_message_with_image(text: &str) -> Option<ResponseItem> {
         if let RolloutItem::ResponseItem(ResponseItem::Message { role, content, .. }) =
             &rollout.item
             && role == "user"
-            && content
-                .iter()
-                .any(|span| matches!(span, ContentItem::InputImage { .. }))
+            && content.iter().any(
+                |span| matches!(span, ContentItem::InputText { text } if text.contains(needle)),
+            )
             && let RolloutItem::ResponseItem(item) = rollout.item.clone()
         {
             return Some(item);
         }
     }
     None
-}
-
-fn extract_image_url(item: &ResponseItem) -> Option<String> {
-    match item {
-        ResponseItem::Message { content, .. } => content.iter().find_map(|span| match span {
-            ContentItem::InputImage { image_url, .. } => Some(image_url.clone()),
-            _ => None,
-        }),
-        _ => None,
-    }
 }
 
 async fn read_rollout_text(path: &Path) -> anyhow::Result<String> {
@@ -152,23 +150,17 @@ async fn copy_paste_local_image_persists_rollout_request_shape() -> anyhow::Resu
 
     let rollout_path = codex.rollout_path().expect("rollout path");
     let rollout_text = read_rollout_text(&rollout_path).await?;
-    let actual = find_user_message_with_image(&rollout_text)
-        .expect("expected user message with input image in rollout");
+    let actual = find_user_message_with_text(&rollout_text, "call the `view_image` tool")
+        .expect("expected user message with view_image instruction in rollout");
 
-    let image_url = extract_image_url(&actual).expect("expected image url in rollout");
     let expected = ResponseItem::Message {
         id: None,
         role: "user".to_string(),
         content: vec![
             ContentItem::InputText {
-                text: codex_protocol::models::local_image_open_tag_text(/*label_number*/ 1),
-            },
-            ContentItem::InputImage {
-                image_url,
-                detail: Some(DEFAULT_IMAGE_DETAIL),
-            },
-            ContentItem::InputText {
-                text: codex_protocol::models::image_close_tag_text(),
+                text: codex_protocol::models::local_image_tool_instruction_text(
+                    /*label_number*/ 1, &abs_path,
+                ),
             },
             ContentItem::InputText {
                 text: "pasted image".to_string(),
@@ -249,17 +241,24 @@ async fn drag_drop_image_persists_rollout_request_shape() -> anyhow::Result<()> 
 
     let rollout_path = codex.rollout_path().expect("rollout path");
     let rollout_text = read_rollout_text(&rollout_path).await?;
-    let actual = find_user_message_with_image(&rollout_text)
-        .expect("expected user message with input image in rollout");
+    let actual = find_user_message_with_text(
+        &rollout_text,
+        "native image input is disabled and this attachment does not have a local filesystem path",
+    )
+    .expect("expected user message with disabled native image instruction in rollout");
 
-    let image_url = extract_image_url(&actual).expect("expected image url in rollout");
+    assert!(
+        !message_has_input_image(&actual),
+        "image URL attachment should not be sent as native InputImage"
+    );
     let expected = ResponseItem::Message {
         id: None,
         role: "user".to_string(),
         content: vec![
-            ContentItem::InputImage {
-                image_url,
-                detail: Some(DEFAULT_IMAGE_DETAIL),
+            ContentItem::InputText {
+                text: codex_protocol::models::image_tool_unavailable_instruction_text(
+                    /*label_number*/ 1,
+                ),
             },
             ContentItem::InputText {
                 text: "dropped image".to_string(),

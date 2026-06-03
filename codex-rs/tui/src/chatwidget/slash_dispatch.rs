@@ -79,24 +79,39 @@ impl ChatWidget {
         self.bottom_pane.record_pending_slash_command_history();
     }
 
-    fn apply_plan_slash_command(&mut self) -> bool {
+    fn apply_collaboration_mode_slash_command(
+        &mut self,
+        mode_kind: ModeKind,
+        mask: Option<CollaborationModeMask>,
+    ) -> bool {
         if !self.collaboration_modes_enabled() {
+            let command = mode_kind.display_name().to_lowercase();
             self.add_info_message(
                 "Collaboration modes are disabled.".to_string(),
-                Some("Enable collaboration modes to use /plan.".to_string()),
+                Some(format!("Enable collaboration modes to use /{command}.")),
             );
             return false;
         }
-        if let Some(mask) = collaboration_modes::plan_mask(self.model_catalog.as_ref()) {
+        if let Some(mask) = mask {
             self.set_collaboration_mask_from_user_action(mask);
             true
         } else {
             self.add_info_message(
-                "Plan mode unavailable right now.".to_string(),
+                format!("{} mode unavailable right now.", mode_kind.display_name()),
                 /*hint*/ None,
             );
             false
         }
+    }
+
+    fn apply_plan_slash_command(&mut self) -> bool {
+        let mask = collaboration_modes::plan_mask(self.model_catalog.as_ref());
+        self.apply_collaboration_mode_slash_command(ModeKind::Plan, mask)
+    }
+
+    fn apply_blind_slash_command(&mut self) -> bool {
+        let mask = collaboration_modes::blind_mask(self.model_catalog.as_ref());
+        self.apply_collaboration_mode_slash_command(ModeKind::Blind, mask)
     }
 
     fn request_side_conversation(
@@ -224,6 +239,9 @@ impl ChatWidget {
             }
             SlashCommand::Plan => {
                 self.apply_plan_slash_command();
+            }
+            SlashCommand::Blind => {
+                self.apply_blind_slash_command();
             }
             SlashCommand::Goal => {
                 if !self.config.features.enabled(Feature::Goals) {
@@ -629,8 +647,13 @@ impl ChatWidget {
                 };
                 self.app_event_tx.set_thread_name(name);
             }
-            SlashCommand::Plan if !trimmed.is_empty() => {
-                if !self.apply_plan_slash_command() {
+            SlashCommand::Plan | SlashCommand::Blind if !trimmed.is_empty() => {
+                let applied = match cmd {
+                    SlashCommand::Plan => self.apply_plan_slash_command(),
+                    SlashCommand::Blind => self.apply_blind_slash_command(),
+                    _ => unreachable!(),
+                };
+                if !applied {
                     return;
                 }
                 let user_message = self.prepared_inline_user_message(
@@ -960,6 +983,7 @@ impl ChatWidget {
             | SlashCommand::Settings
             | SlashCommand::Personality
             | SlashCommand::Plan
+            | SlashCommand::Blind
             | SlashCommand::Goal
             | SlashCommand::Side
             | SlashCommand::Btw

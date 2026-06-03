@@ -1,3 +1,4 @@
+use codex_collaboration_mode_templates::BLIND as COLLABORATION_MODE_BLIND;
 use codex_collaboration_mode_templates::DEFAULT as COLLABORATION_MODE_DEFAULT;
 use codex_collaboration_mode_templates::PLAN as COLLABORATION_MODE_PLAN;
 use codex_protocol::config_types::CollaborationModeMask;
@@ -14,7 +15,7 @@ static COLLABORATION_MODE_DEFAULT_TEMPLATE: LazyLock<Template> = LazyLock::new(|
 });
 
 pub fn builtin_collaboration_mode_presets() -> Vec<CollaborationModeMask> {
-    vec![plan_preset(), default_preset()]
+    vec![plan_preset(), blind_preset(), default_preset()]
 }
 
 fn plan_preset() -> CollaborationModeMask {
@@ -24,6 +25,16 @@ fn plan_preset() -> CollaborationModeMask {
         model: None,
         reasoning_effort: Some(Some(ReasoningEffort::Medium)),
         developer_instructions: Some(Some(COLLABORATION_MODE_PLAN.to_string())),
+    }
+}
+
+fn blind_preset() -> CollaborationModeMask {
+    CollaborationModeMask {
+        name: ModeKind::Blind.display_name().to_string(),
+        mode: Some(ModeKind::Blind),
+        model: None,
+        reasoning_effort: None,
+        developer_instructions: Some(Some(COLLABORATION_MODE_BLIND.to_string())),
     }
 }
 

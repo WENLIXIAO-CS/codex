@@ -176,7 +176,7 @@ fn assert_view_image_description_output(
     assert_eq!(
         output_text,
         format!(
-            "Image description from {VIEW_IMAGE_DESCRIPTION_MODEL}:\n{VIEW_IMAGE_DESCRIPTION_TEXT}"
+            "Image Tool Result:\nImage description from {VIEW_IMAGE_DESCRIPTION_MODEL}:\n{VIEW_IMAGE_DESCRIPTION_TEXT}"
         )
     );
     Ok(())
@@ -340,13 +340,10 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
     let TestCodex {
         codex,
         session_configured,
-        config,
         ..
     } = &test;
-    let cwd = config.cwd.clone();
 
     let rel_path = "assets/example.png";
-    let abs_path = cwd.join(rel_path);
     let original_width = 2304;
     let original_height = 864;
     write_workspace_png(
@@ -393,26 +390,25 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         ))
         .await?;
 
-    let mut item_started = None;
-    let mut item_completed = None;
-    let mut legacy_event = None;
+    let mut emitted_native_image_view = false;
     wait_for_event_with_timeout(
         codex,
         |event| match event {
             EventMsg::ItemStarted(event) => {
                 if matches!(&event.item, codex_protocol::items::TurnItem::ImageView(_)) {
-                    item_started = Some(event.item.clone());
+                    emitted_native_image_view = true;
                 }
                 false
             }
             EventMsg::ItemCompleted(event) => {
                 if matches!(&event.item, codex_protocol::items::TurnItem::ImageView(_)) {
-                    item_completed = Some(event.item.clone());
+                    emitted_native_image_view = true;
                 }
                 false
             }
             EventMsg::ViewImageToolCall(event) => {
-                legacy_event = Some(event.clone());
+                let _ = event;
+                emitted_native_image_view = true;
                 false
             }
             EventMsg::TurnComplete(_) => true,
@@ -423,24 +419,10 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
     )
     .await;
-
-    match item_started.expect("view image item started event emitted") {
-        codex_protocol::items::TurnItem::ImageView(item) => {
-            assert_eq!(item.id, call_id);
-            assert_eq!(item.path, abs_path);
-        }
-        other => panic!("expected ImageView item, got {other:?}"),
-    }
-    match item_completed.expect("view image item completed event emitted") {
-        codex_protocol::items::TurnItem::ImageView(item) => {
-            assert_eq!(item.id, call_id);
-            assert_eq!(item.path, abs_path);
-        }
-        other => panic!("expected ImageView item, got {other:?}"),
-    }
-    let legacy_event = legacy_event.expect("legacy view image event emitted");
-    assert_eq!(legacy_event.call_id, call_id);
-    assert_eq!(legacy_event.path, abs_path);
+    assert!(
+        !emitted_native_image_view,
+        "view_image should not emit native image-view events"
+    );
 
     let description_req = description_mock.single_request();
     let image_url = image_url_from_description_request(&description_req, "high")?;

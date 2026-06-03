@@ -14,6 +14,7 @@ codex_rust_crate(
     ) + [
         "//codex-rs/collaboration-mode-templates:templates/default.md",
         "//codex-rs/collaboration-mode-templates:templates/plan.md",
+        "//codex-rs/collaboration-mode-templates:templates/blind.md",
     ],
     test_data_extra = glob([
         "src/**/*.rs",

@@ -1,6 +1,4 @@
 use codex_models_manager::model_info::model_info_from_slug;
-use codex_protocol::items::ImageViewItem;
-use codex_protocol::items::TurnItem;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
@@ -84,7 +82,6 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
             session,
             turn,
             payload,
-            call_id,
             ..
         } = invocation;
 
@@ -152,8 +149,6 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
                     abs_path.display()
                 ))
             })?;
-        let event_path = abs_path.clone();
-
         let can_request_original_detail = can_request_original_image_detail(&turn.model_info);
         let use_original_detail =
             can_request_original_detail && matches!(detail, Some(ViewImageDetail::Original));
@@ -175,6 +170,7 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
                     abs_path.display()
                 ))
             })?;
+        eprintln!("view image tool");
         let image_url = image.into_data_url();
         let description_model_info = model_info_from_slug(VIEW_IMAGE_DESCRIPTION_MODEL);
         let description = session
@@ -193,13 +189,6 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
                     abs_path.display()
                 ))
             })?;
-
-        let item = TurnItem::ImageView(ImageViewItem {
-            id: call_id,
-            path: event_path,
-        });
-        session.emit_turn_item_started(turn.as_ref(), &item).await;
-        session.emit_turn_item_completed(turn.as_ref(), item).await;
 
         Ok(boxed_tool_output(ViewImageOutput {
             description,
@@ -228,7 +217,7 @@ impl ToolOutput for ViewImageOutput {
         let body = FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputText {
                 text: format!(
-                    "Image description from {}:\n{}",
+                    "Image Tool Result:\nImage description from {}:\n{}",
                     self.model, self.description
                 ),
             },

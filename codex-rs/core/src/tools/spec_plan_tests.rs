@@ -8,6 +8,7 @@ use codex_mcp::ToolInfo;
 use codex_model_provider::create_model_provider;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::openai_models::ApplyPatchToolType;
@@ -422,6 +423,22 @@ async fn environment_count_controls_environment_backed_tools() {
         multiple_environments.visible_spec("view_image"),
         "environment_id"
     ));
+}
+
+#[tokio::test]
+async fn blind_mode_disables_view_image_tool() {
+    let plan = probe(|turn| {
+        duplicate_primary_environment(turn);
+        set_feature(turn, Feature::ShellTool, /*enabled*/ true);
+        set_feature(turn, Feature::UnifiedExec, /*enabled*/ true);
+        turn.model_info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
+        turn.collaboration_mode.mode = ModeKind::Blind;
+    })
+    .await;
+
+    plan.assert_visible_contains(&["exec_command", "apply_patch"]);
+    plan.assert_visible_lacks(&["view_image"]);
+    plan.assert_registered_lacks(&["view_image"]);
 }
 
 #[tokio::test]
