@@ -40,7 +40,7 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: VIEW_IMAGE_TOOL_NAME.to_string(),
-        description: "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk."
+        description: "Analyze a local image file from the filesystem using a separate vision model and return a textual description. Use this when visual inspection is needed; the coding agent cannot inspect image pixels directly."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -53,17 +53,16 @@ fn view_image_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "image_url": {
+            "description": {
                 "type": "string",
-                "description": "Data URL for the loaded image."
+                "description": "Textual description of the image produced by the separate vision model."
             },
-            "detail": {
+            "model": {
                 "type": "string",
-                "enum": ["high", "original"],
-                "description": "Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved."
+                "description": "Vision model used to produce the description."
             }
         },
-        "required": ["image_url", "detail"],
+        "required": ["description", "model"],
         "additionalProperties": false
     })
 }

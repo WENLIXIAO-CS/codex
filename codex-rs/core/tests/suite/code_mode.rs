@@ -2347,7 +2347,7 @@ async fn code_mode_can_use_view_image_result_with_image_helper() -> Result<()> {
     let code = format!(
         r#"
 const out = await tools.view_image({{ path: {image_path_json}, detail: "original" }});
-image(out);
+text(JSON.stringify(out));
 "#
     );
 
@@ -2361,6 +2361,15 @@ image(out);
     )
     .await;
 
+    responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-description", "A tiny test image."),
+            ev_completed("resp-description"),
+        ]),
+    )
+    .await;
+
     let second_mock = responses::mount_sse_once(
         &server,
         sse(vec![
@@ -2370,39 +2379,19 @@ image(out);
     )
     .await;
 
-    test.submit_turn("use exec to call view_image and emit its image output")
+    test.submit_turn("use exec to call view_image and emit its description output")
         .await?;
 
     let req = second_mock.single_request();
-    let items = custom_tool_output_items(&req, "call-1");
     let (_, success) = custom_tool_output_body_and_success(&req, "call-1");
     assert_ne!(
         success,
         Some(false),
         "code_mode view_image call failed unexpectedly"
     );
-    assert_eq!(items.len(), 2);
-    assert_regex_match(
-        concat!(
-            r"(?s)\A",
-            r"Script completed\nWall time \d+\.\d seconds\nOutput:\n\z"
-        ),
-        text_item(&items, /*index*/ 0),
-    );
-
     assert_eq!(
-        items[1].get("type").and_then(Value::as_str),
-        Some("input_image")
-    );
-
-    let emitted_image_url = items[1]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .expect("image helper should emit an input_image item with image_url");
-    assert!(emitted_image_url.starts_with("data:image/png;base64,"));
-    assert_eq!(
-        items[1].get("detail").and_then(Value::as_str),
-        Some("original")
+        custom_tool_output_last_non_empty_text(&req, "call-1"),
+        Some(r#"{"description":"A tiny test image.","model":"gpt-5.5"}"#.to_string())
     );
 
     Ok(())
@@ -2861,7 +2850,7 @@ text(JSON.stringify(tool));
         parsed,
         serde_json::json!({
             "name": "view_image",
-            "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```",
+            "description": "Analyze a local image file from the filesystem using a separate vision model and return a textual description. Use this when visual inspection is needed; the coding agent cannot inspect image pixels directly.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file\n  path: string;\n}): Promise<{\n  // Textual description of the image produced by the separate vision model.\n  description: string;\n  // Vision model used to produce the description.\n  model: string;\n}>; };\n```",
         })
     );
 

@@ -74,6 +74,8 @@ use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -150,6 +152,7 @@ const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 // period between stream events.
 const COMPACT_REQUEST_TIMEOUT_IDLE_MULTIPLIER: u32 = 4;
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
+const IMAGE_DESCRIPTION_INSTRUCTIONS: &str = "Describe this image for a coding agent. Include visible UI text, layout, errors, file or terminal content, and any details needed to reason about coding tasks. Be concise but specific. Do not speculate beyond what is visible.";
 #[cfg(test)]
 pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
     Duration::from_millis(DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS);
@@ -598,6 +601,128 @@ impl ModelClient {
             .summarize_input(&payload, self.build_subagent_headers())
             .await
             .map_err(map_api_error)
+    }
+
+    pub(crate) async fn describe_image(
+        &self,
+        image_url: String,
+        detail: ImageDetail,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+    ) -> Result<String> {
+        let client_setup = self.current_client_setup().await?;
+        let transport = ReqwestTransport::new(build_reqwest_client());
+        let request_telemetry = Self::build_request_telemetry(
+            session_telemetry,
+            AuthRequestTelemetryContext::new(
+                client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+                client_setup.api_auth.as_ref(),
+                PendingUnauthorizedRetry::default(),
+            ),
+            RequestRouteTelemetry::for_endpoint(RESPONSES_ENDPOINT),
+            self.state.auth_env_telemetry.clone(),
+        );
+        let prompt = Prompt {
+            input: vec![ResponseItem::Message {
+                role: "user".to_string(),
+                content: vec![
+                    ContentItem::InputText {
+                        text: "Analyze the attached image for the coding agent.".to_string(),
+                    },
+                    ContentItem::InputImage {
+                        image_url,
+                        detail: Some(detail),
+                    },
+                ],
+                id: None,
+                phase: None,
+            }],
+            tools: Vec::new(),
+            parallel_tool_calls: false,
+            base_instructions: codex_protocol::models::BaseInstructions {
+                text: IMAGE_DESCRIPTION_INSTRUCTIONS.to_string(),
+            },
+            personality: None,
+            output_schema: None,
+            output_schema_strict: true,
+        };
+        let request = self.build_responses_request(
+            &client_setup.api_provider,
+            &prompt,
+            model_info,
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )?;
+
+        let mut extra_headers = ApiHeaderMap::new();
+        if let Ok(header_value) = HeaderValue::from_str(&self.state.installation_id) {
+            extra_headers.insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
+        }
+        extra_headers.extend(build_responses_headers(
+            self.state.beta_features_header.as_deref(),
+            /*turn_state*/ None,
+            /*turn_metadata_header*/ None,
+        ));
+        extra_headers.extend(self.build_responses_identity_headers());
+        if let Some(header_value) = self.generate_attestation_header_for().await {
+            extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
+        }
+
+        let client =
+            ApiResponsesClient::new(transport, client_setup.api_provider, client_setup.api_auth)
+                .with_telemetry(Some(request_telemetry), /*sse*/ None);
+        let mut stream = client
+            .stream_request(
+                request,
+                ApiResponsesOptions {
+                    session_id: Some(self.state.session_id.to_string()),
+                    thread_id: Some(self.state.thread_id.to_string()),
+                    session_source: Some(self.state.session_source.clone()),
+                    extra_headers,
+                    compression: Compression::None,
+                    turn_state: None,
+                },
+            )
+            .await
+            .map_err(map_api_error)?;
+
+        let mut streamed_text = String::new();
+        let mut final_text = None;
+        while let Some(event) = stream.next().await {
+            match event.map_err(map_api_error)? {
+                ResponseEvent::OutputTextDelta(delta) => streamed_text.push_str(&delta),
+                ResponseEvent::OutputItemDone(item) => {
+                    if let Some(text) = assistant_text_from_response_item(&item) {
+                        final_text = Some(text);
+                    }
+                }
+                ResponseEvent::Completed { .. } => break,
+                ResponseEvent::Created
+                | ResponseEvent::OutputItemAdded(_)
+                | ResponseEvent::ServerModel(_)
+                | ResponseEvent::ModelVerifications(_)
+                | ResponseEvent::ServerReasoningIncluded(_)
+                | ResponseEvent::ToolCallInputDelta { .. }
+                | ResponseEvent::ReasoningSummaryDelta { .. }
+                | ResponseEvent::ReasoningContentDelta { .. }
+                | ResponseEvent::ReasoningSummaryPartAdded { .. }
+                | ResponseEvent::RateLimits(_)
+                | ResponseEvent::ModelsEtag(_) => {}
+            }
+        }
+
+        let description = if streamed_text.trim().is_empty() {
+            final_text.unwrap_or_default()
+        } else {
+            streamed_text
+        };
+        if description.trim().is_empty() {
+            return Err(CodexErr::InvalidRequest(
+                "image description model returned no text".to_string(),
+            ));
+        }
+        Ok(description)
     }
 
     fn build_subagent_headers(&self) -> ApiHeaderMap {
@@ -1646,6 +1771,27 @@ impl ModelClientSession {
 /// metadata with the same sanitization path used when constructing headers.
 fn parse_turn_metadata_header(turn_metadata_header: Option<&str>) -> Option<HeaderValue> {
     turn_metadata_header.and_then(|value| HeaderValue::from_str(value).ok())
+}
+
+fn assistant_text_from_response_item(item: &ResponseItem) -> Option<String> {
+    let ResponseItem::Message { role, content, .. } = item else {
+        return None;
+    };
+    if role != "assistant" {
+        return None;
+    }
+
+    let text = content
+        .iter()
+        .filter_map(|content_item| match content_item {
+            ContentItem::OutputText { text } | ContentItem::InputText { text } => {
+                Some(text.as_str())
+            }
+            ContentItem::InputImage { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// Stamp a ResponsesWsRequest with the current time.

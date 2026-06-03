@@ -1,12 +1,11 @@
+use codex_models_manager::model_info::model_info_from_slug;
 use codex_protocol::items::ImageViewItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ResponseInputItem;
-use codex_protocol::openai_models::InputModality;
 use codex_utils_image::PromptImageMode;
 use codex_utils_image::load_for_prompt_bytes;
 use serde::Deserialize;
@@ -47,8 +46,7 @@ impl ViewImageHandler {
     }
 }
 
-const VIEW_IMAGE_UNSUPPORTED_MESSAGE: &str =
-    "view_image is not allowed because you do not support image inputs";
+const VIEW_IMAGE_DESCRIPTION_MODEL: &str = "gpt-5.5";
 
 #[derive(Deserialize)]
 struct ViewImageArgs {
@@ -82,17 +80,6 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
         &self,
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-        if !invocation
-            .turn
-            .model_info
-            .input_modalities
-            .contains(&InputModality::Image)
-        {
-            return Err(FunctionCallError::RespondToModel(
-                VIEW_IMAGE_UNSUPPORTED_MESSAGE.to_string(),
-            ));
-        }
-
         let ToolInvocation {
             session,
             turn,
@@ -189,6 +176,23 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
                 ))
             })?;
         let image_url = image.into_data_url();
+        let description_model_info = model_info_from_slug(VIEW_IMAGE_DESCRIPTION_MODEL);
+        let description = session
+            .services
+            .model_client
+            .describe_image(
+                image_url,
+                image_detail,
+                &description_model_info,
+                &turn.session_telemetry,
+            )
+            .await
+            .map_err(|error| {
+                FunctionCallError::RespondToModel(format!(
+                    "unable to describe image at `{}` with {VIEW_IMAGE_DESCRIPTION_MODEL}: {error}",
+                    abs_path.display()
+                ))
+            })?;
 
         let item = TurnItem::ImageView(ImageViewItem {
             id: call_id,
@@ -198,8 +202,8 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
         session.emit_turn_item_completed(turn.as_ref(), item).await;
 
         Ok(boxed_tool_output(ViewImageOutput {
-            image_url,
-            image_detail,
+            description,
+            model: VIEW_IMAGE_DESCRIPTION_MODEL.to_string(),
         }))
     }
 }
@@ -207,13 +211,13 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
 impl CoreToolRuntime for ViewImageHandler {}
 
 pub struct ViewImageOutput {
-    image_url: String,
-    image_detail: ImageDetail,
+    description: String,
+    model: String,
 }
 
 impl ToolOutput for ViewImageOutput {
     fn log_preview(&self) -> String {
-        self.image_url.clone()
+        self.description.clone()
     }
 
     fn success_for_logging(&self) -> bool {
@@ -221,26 +225,35 @@ impl ToolOutput for ViewImageOutput {
     }
 
     fn to_response_item(&self, call_id: &str, _payload: &ToolPayload) -> ResponseInputItem {
-        let body =
-            FunctionCallOutputBody::ContentItems(vec![FunctionCallOutputContentItem::InputImage {
-                image_url: self.image_url.clone(),
-                detail: Some(self.image_detail),
-            }]);
-        let output = FunctionCallOutputPayload {
-            body,
-            success: Some(true),
-        };
-
+        let body = FunctionCallOutputPayload::from_content_items(vec![
+            FunctionCallOutputContentItem::InputText {
+                text: format!(
+                    "Image description from {}:\n{}",
+                    self.model, self.description
+                ),
+            },
+        ]);
         ResponseInputItem::FunctionCallOutput {
             call_id: call_id.to_string(),
-            output,
+            output: body,
         }
+    }
+
+    fn post_tool_use_response(
+        &self,
+        _call_id: &str,
+        _payload: &ToolPayload,
+    ) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "description": self.description,
+            "model": self.model,
+        }))
     }
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> serde_json::Value {
         serde_json::json!({
-            "image_url": self.image_url,
-            "detail": self.image_detail
+            "description": self.description,
+            "model": self.model,
         })
     }
 }
@@ -260,10 +273,10 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[test]
-    fn code_mode_result_returns_image_url_object() {
+    fn code_mode_result_returns_description_object() {
         let output = ViewImageOutput {
-            image_url: "data:image/png;base64,AAA".to_string(),
-            image_detail: DEFAULT_IMAGE_DETAIL,
+            description: "A terminal screenshot showing a compiler error.".to_string(),
+            model: VIEW_IMAGE_DESCRIPTION_MODEL.to_string(),
         };
 
         let result = output.code_mode_result(&ToolPayload::Function {
@@ -273,8 +286,8 @@ mod tests {
         assert_eq!(
             result,
             json!({
-                "image_url": "data:image/png;base64,AAA",
-                "detail": "high",
+                "description": "A terminal screenshot showing a compiler error.",
+                "model": "gpt-5.5",
             })
         );
     }

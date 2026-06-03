@@ -32,6 +32,7 @@ use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::get_remote_test_env;
 use core_test_support::responses;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -68,6 +69,8 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::body_string_contains;
 
 const VIEW_IMAGE_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
+const VIEW_IMAGE_DESCRIPTION_TEXT: &str = "A red screenshot for test coverage.";
+const VIEW_IMAGE_DESCRIPTION_MODEL: &str = "gpt-5.5";
 
 fn disabled_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
     let (sandbox_policy, permission_profile) =
@@ -117,6 +120,66 @@ fn image_messages(body: &Value) -> Vec<&Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn input_image_spans(body: &Value) -> Vec<&Value> {
+    body.get("input")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_image"))
+        .collect()
+}
+
+fn image_url_from_description_request(
+    req: &ResponsesRequest,
+    expected_detail: &str,
+) -> anyhow::Result<String> {
+    let body = req.body_json();
+    assert_eq!(
+        body.get("model").and_then(Value::as_str),
+        Some(VIEW_IMAGE_DESCRIPTION_MODEL)
+    );
+    assert!(
+        body.get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty),
+        "description request should not expose tools"
+    );
+    let input_images = input_image_spans(&body);
+    assert_eq!(input_images.len(), 1);
+    assert_eq!(
+        input_images[0].get("detail").and_then(Value::as_str),
+        Some(expected_detail)
+    );
+    input_images[0]
+        .get("image_url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .context("description request should include image_url")
+}
+
+fn assert_view_image_description_output(
+    req: &ResponsesRequest,
+    call_id: &str,
+) -> anyhow::Result<()> {
+    assert!(
+        req.inputs_of_type("input_image").is_empty(),
+        "main coding model should not receive view_image pixels"
+    );
+    let output_text = req
+        .function_call_output_content_and_success(call_id)
+        .and_then(|(content, _)| content)
+        .context("view_image description output text present")?;
+    assert_eq!(
+        output_text,
+        format!(
+            "Image description from {VIEW_IMAGE_DESCRIPTION_MODEL}:\n{VIEW_IMAGE_DESCRIPTION_TEXT}"
+        )
+    );
+    Ok(())
 }
 
 fn find_image_message(body: &Value) -> Option<&Value> {
@@ -305,6 +368,12 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
     ]);
     responses::mount_sse_once(&server, first_response).await;
 
+    let description_response = sse(vec![
+        ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+        ev_completed("resp-description"),
+    ]);
+    let description_mock = responses::mount_sse_once(&server, description_response).await;
+
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
@@ -373,32 +442,15 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
     assert_eq!(legacy_event.call_id, call_id);
     assert_eq!(legacy_event.path, abs_path);
 
+    let description_req = description_mock.single_request();
+    let image_url = image_url_from_description_request(&description_req, "high")?;
     let req = mock.single_request();
     let body = req.body_json();
     assert!(
         find_image_message(&body).is_none(),
         "view_image tool should not inject a separate image message"
     );
-
-    let function_output = req.function_call_output(call_id);
-    let output_items = function_output
-        .get("output")
-        .and_then(Value::as_array)
-        .expect("function_call_output should be a content item array");
-    assert_eq!(
-        output_items.len(),
-        1,
-        "view_image should return only the image content item (no tag/label text)"
-    );
-    assert_eq!(
-        output_items[0].get("type").and_then(Value::as_str),
-        Some("input_image"),
-        "view_image should return only an input_image content item"
-    );
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .expect("image_url present");
+    assert_view_image_description_output(&req, call_id)?;
 
     let (prefix, encoded) = image_url
         .split_once(',')
@@ -446,6 +498,10 @@ async fn view_image_routes_to_selected_local_environment() -> anyhow::Result<()>
                 ev_completed("resp-1"),
             ]),
             sse(vec![
+                ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+                ev_completed("resp-description"),
+            ]),
+            sse(vec![
                 ev_response_created("resp-2"),
                 ev_assistant_message("msg-1", "done"),
                 ev_completed("resp-2"),
@@ -463,23 +519,16 @@ async fn view_image_routes_to_selected_local_environment() -> anyhow::Result<()>
     )
     .await?;
 
-    let output = response_mock
-        .last_request()
-        .context("missing request containing local view_image output")?
-        .function_call_output(call_id);
-    let output_items = output
-        .get("output")
-        .and_then(Value::as_array)
-        .context("view_image output should be content items")?;
-    assert_eq!(output_items.len(), 1);
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .context("view_image output should include image_url")?;
+    let requests = response_mock.requests();
+    let image_url = image_url_from_description_request(&requests[1], "high")?;
     assert!(
         image_url.starts_with("data:image/png;base64,"),
         "unexpected image_url: {image_url}",
     );
+    let final_request = response_mock
+        .last_request()
+        .context("missing request containing local view_image output")?;
+    assert_view_image_description_output(&final_request, call_id)?;
 
     Ok(())
 }
@@ -511,6 +560,10 @@ async fn view_image_tool_applies_local_sandbox_read_denies() -> anyhow::Result<(
                     &json!({ "path": rel_path }).to_string(),
                 ),
                 ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+                ev_completed("resp-description"),
             ]),
             sse(vec![
                 ev_response_created("resp-2"),
@@ -629,24 +682,16 @@ async fn view_image_routes_to_selected_remote_environment() -> anyhow::Result<()
     )
     .await?;
 
-    let output = response_mock
-        .last_request()
-        .context("missing request containing view_image output")?
-        .function_call_output(call_id)
-        .clone();
-    let output_items = output
-        .get("output")
-        .and_then(Value::as_array)
-        .context("view_image output should be content items")?;
-    assert_eq!(output_items.len(), 1);
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .context("view_image output should include image_url")?;
+    let requests = response_mock.requests();
+    let image_url = image_url_from_description_request(&requests[1], "high")?;
     assert!(
         image_url.starts_with("data:image/png;base64,"),
         "unexpected image_url: {image_url}",
     );
+    let final_request = response_mock
+        .last_request()
+        .context("missing request containing view_image output")?;
+    assert_view_image_description_output(&final_request, call_id)?;
 
     test.fs()
         .remove(
@@ -698,6 +743,12 @@ async fn view_image_tool_can_preserve_original_resolution_when_requested_on_gpt5
     ]);
     responses::mount_sse_once(&server, first_response).await;
 
+    let description_response = sse(vec![
+        ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+        ev_completed("resp-description"),
+    ]);
+    let description_mock = responses::mount_sse_once(&server, description_response).await;
+
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
@@ -724,21 +775,10 @@ async fn view_image_tool_can_preserve_original_resolution_when_requested_on_gpt5
     )
     .await;
 
+    let description_req = description_mock.single_request();
+    let image_url = image_url_from_description_request(&description_req, "original")?;
     let req = mock.single_request();
-    let function_output = req.function_call_output(call_id);
-    let output_items = function_output
-        .get("output")
-        .and_then(Value::as_array)
-        .expect("function_call_output should be a content item array");
-    assert_eq!(output_items.len(), 1);
-    assert_eq!(
-        output_items[0].get("detail").and_then(Value::as_str),
-        Some("original")
-    );
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .expect("image_url present");
+    assert_view_image_description_output(&req, call_id)?;
 
     let (_, encoded) = image_url
         .split_once(',')
@@ -867,6 +907,12 @@ async fn view_image_tool_treats_null_detail_as_omitted() -> anyhow::Result<()> {
     ]);
     responses::mount_sse_once(&server, first_response).await;
 
+    let description_response = sse(vec![
+        ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+        ev_completed("resp-description"),
+    ]);
+    let description_mock = responses::mount_sse_once(&server, description_response).await;
+
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
@@ -893,21 +939,10 @@ async fn view_image_tool_treats_null_detail_as_omitted() -> anyhow::Result<()> {
     )
     .await;
 
+    let description_req = description_mock.single_request();
+    let image_url = image_url_from_description_request(&description_req, "high")?;
     let req = mock.single_request();
-    let function_output = req.function_call_output(call_id);
-    let output_items = function_output
-        .get("output")
-        .and_then(Value::as_array)
-        .expect("function_call_output should be a content item array");
-    assert_eq!(output_items.len(), 1);
-    assert_eq!(
-        output_items[0].get("detail").and_then(Value::as_str),
-        Some("high")
-    );
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .expect("image_url present");
+    assert_view_image_description_output(&req, call_id)?;
 
     let (_, encoded) = image_url
         .split_once(',')
@@ -957,6 +992,12 @@ async fn view_image_tool_resizes_when_model_lacks_original_detail_support() -> a
     ]);
     responses::mount_sse_once(&server, first_response).await;
 
+    let description_response = sse(vec![
+        ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+        ev_completed("resp-description"),
+    ]);
+    let description_mock = responses::mount_sse_once(&server, description_response).await;
+
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
@@ -983,22 +1024,10 @@ async fn view_image_tool_resizes_when_model_lacks_original_detail_support() -> a
     )
     .await;
 
+    let description_req = description_mock.single_request();
+    let image_url = image_url_from_description_request(&description_req, "high")?;
     let req = mock.single_request();
-    let function_output = req.function_call_output(call_id);
-    let output_items = function_output
-        .get("output")
-        .and_then(Value::as_array)
-        .expect("function_call_output should be a content item array");
-    assert_eq!(output_items.len(), 1);
-    assert_eq!(
-        output_items[0].get("detail").and_then(Value::as_str),
-        Some("high")
-    );
-
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .expect("image_url present");
+    assert_view_image_description_output(&req, call_id)?;
 
     let (prefix, encoded) = image_url
         .split_once(',')
@@ -1051,6 +1080,12 @@ async fn view_image_tool_does_not_force_original_resolution_with_capability_only
     ]);
     responses::mount_sse_once(&server, first_response).await;
 
+    let description_response = sse(vec![
+        ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+        ev_completed("resp-description"),
+    ]);
+    let description_mock = responses::mount_sse_once(&server, description_response).await;
+
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
@@ -1077,21 +1112,10 @@ async fn view_image_tool_does_not_force_original_resolution_with_capability_only
     )
     .await;
 
+    let description_req = description_mock.single_request();
+    let image_url = image_url_from_description_request(&description_req, "high")?;
     let req = mock.single_request();
-    let function_output = req.function_call_output(call_id);
-    let output_items = function_output
-        .get("output")
-        .and_then(Value::as_array)
-        .expect("function_call_output should be a content item array");
-    assert_eq!(output_items.len(), 1);
-    assert_eq!(
-        output_items[0].get("detail").and_then(Value::as_str),
-        Some("high")
-    );
-    let image_url = output_items[0]
-        .get("image_url")
-        .and_then(Value::as_str)
-        .expect("image_url present");
+    assert_view_image_description_output(&req, call_id)?;
 
     let (_, encoded) = image_url
         .split_once(',')
@@ -1328,13 +1352,13 @@ async fn view_image_tool_errors_when_file_missing() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> anyhow::Result<()> {
+async fn view_image_tool_returns_description_for_text_only_model() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     // Use MockServer directly (not start_mock_server) so the first /models request returns our
     // text-only model. start_mock_server mounts empty models first, causing get_model_info to
     // fall back to model_info_from_slug with default_input_modalities (Text+Image), which would
-    // incorrectly allow view_image.
+    // make this test ineffective.
     let server = MockServer::builder()
         .body_print_limit(BodyPrintLimit::Limited(80_000))
         .start()
@@ -1413,6 +1437,12 @@ async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> an
     ]);
     responses::mount_sse_once(&server, first_response).await;
 
+    let description_response = sse(vec![
+        ev_assistant_message("msg-description", VIEW_IMAGE_DESCRIPTION_TEXT),
+        ev_completed("resp-description"),
+    ]);
+    let description_mock = responses::mount_sse_once(&server, description_response).await;
+
     let second_response = sse(vec![
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
@@ -1437,15 +1467,14 @@ async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> an
     )
     .await;
 
-    let output_text = mock
-        .single_request()
-        .function_call_output_content_and_success(call_id)
-        .and_then(|(content, _)| content)
-        .expect("output text present");
-    assert_eq!(
-        output_text,
-        "view_image is not allowed because you do not support image inputs"
+    let description_req = description_mock.single_request();
+    let image_url = image_url_from_description_request(&description_req, "high")?;
+    assert!(
+        image_url.starts_with("data:image/png;base64,"),
+        "unexpected image_url: {image_url}",
     );
+    let req = mock.single_request();
+    assert_view_image_description_output(&req, call_id)?;
 
     Ok(())
 }
