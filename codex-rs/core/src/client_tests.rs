@@ -10,6 +10,7 @@ use super::X_OPENAI_SUBAGENT_HEADER;
 use crate::AttestationContext;
 use crate::AttestationProvider;
 use crate::GenerateAttestationFuture;
+use crate::client_common::Prompt;
 use codex_api::ApiError;
 use codex_api::ResponseEvent;
 use codex_app_server_protocol::AuthMode;
@@ -23,6 +24,7 @@ use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_otel::SessionTelemetry;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
@@ -40,6 +42,7 @@ use futures::StreamExt;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -86,6 +89,24 @@ fn test_model_client_with_parent(
     )
 }
 
+fn test_model_client_with_provider(provider: ModelProviderInfo) -> ModelClient {
+    let thread_id = ThreadId::new();
+    ModelClient::new(
+        /*auth_manager*/ None,
+        thread_id.into(),
+        thread_id,
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        provider,
+        SessionSource::Cli,
+        /*parent_thread_id*/ None,
+        /*model_verbosity*/ None,
+        /*enable_request_compression*/ false,
+        /*include_timing_metrics*/ false,
+        /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
+    )
+}
+
 fn test_model_info() -> ModelInfo {
     serde_json::from_value(json!({
         "slug": "gpt-test",
@@ -114,6 +135,98 @@ fn test_model_info() -> ModelInfo {
         "experimental_supported_tools": []
     }))
     .expect("deserialize test model info")
+}
+
+#[test]
+fn nvidia_inference_requests_omit_client_metadata() {
+    let provider = create_oss_provider_with_base_url(
+        "https://inference-api.nvidia.com/v1",
+        WireApi::Responses,
+    );
+    let api_provider = provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("api provider");
+    let request = test_model_client_with_provider(provider)
+        .build_responses_request(
+            &api_provider,
+            &Prompt::default(),
+            &test_model_info(),
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )
+        .expect("build request");
+
+    assert_eq!(request.client_metadata, None);
+}
+
+#[test]
+fn nvidia_integrate_requests_omit_client_metadata() {
+    let provider = create_oss_provider_with_base_url(
+        "https://integrate.api.nvidia.com/v1",
+        WireApi::Responses,
+    );
+    let api_provider = provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("api provider");
+    let request = test_model_client_with_provider(provider)
+        .build_responses_request(
+            &api_provider,
+            &Prompt::default(),
+            &test_model_info(),
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )
+        .expect("build request");
+
+    assert_eq!(request.client_metadata, None);
+}
+
+#[test]
+fn openai_requests_include_client_metadata() {
+    let provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
+    let api_provider = provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("api provider");
+    let request = test_model_client_with_provider(provider)
+        .build_responses_request(
+            &api_provider,
+            &Prompt::default(),
+            &test_model_info(),
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )
+        .expect("build request");
+
+    assert_eq!(
+        request.client_metadata,
+        Some(HashMap::from([(
+            X_CODEX_INSTALLATION_ID_HEADER.to_string(),
+            "11111111-1111-4111-8111-111111111111".to_string(),
+        )]))
+    );
+}
+
+#[test]
+fn amazon_bedrock_requests_omit_client_metadata() {
+    let provider = ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None);
+    let api_provider = provider
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("api provider");
+    let request = test_model_client_with_provider(provider)
+        .build_responses_request(
+            &api_provider,
+            &Prompt::default(),
+            &test_model_info(),
+            /*effort*/ None,
+            ReasoningSummaryConfig::None,
+            /*service_tier*/ None,
+        )
+        .expect("build request");
+
+    assert_eq!(request.client_metadata, None);
 }
 
 fn test_session_telemetry() -> SessionTelemetry {

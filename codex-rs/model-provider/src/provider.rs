@@ -491,6 +491,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn nvidia_provider_returns_no_account_state() {
+        let provider = create_model_provider(
+            ModelProviderInfo::create_nvidia_provider(),
+            /*auth_manager*/ None,
+        );
+
+        assert_eq!(
+            provider.account_state(),
+            Ok(ProviderAccountState {
+                account: None,
+                requires_openai_auth: false,
+            })
+        );
+    }
+
+    #[test]
+    fn nvidia_inference_provider_returns_no_account_state() {
+        let provider = create_model_provider(
+            ModelProviderInfo::create_nvidia_inference_provider(),
+            /*auth_manager*/ None,
+        );
+
+        assert_eq!(
+            provider.account_state(),
+            Ok(ProviderAccountState {
+                account: None,
+                requires_openai_auth: false,
+            })
+        );
+    }
+
     #[tokio::test]
     async fn amazon_bedrock_provider_creates_static_models_manager() {
         let provider = create_model_provider(

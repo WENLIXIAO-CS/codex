@@ -2663,6 +2663,14 @@ mod tests {
             serde_json::to_value(&chatgpt)?,
         );
 
+        let nvidia = v2::Account::Nvidia {};
+        assert_eq!(
+            json!({
+                "type": "nvidia",
+            }),
+            serde_json::to_value(&nvidia)?,
+        );
+
         Ok(())
     }
 

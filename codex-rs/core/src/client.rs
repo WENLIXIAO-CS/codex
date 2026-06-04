@@ -770,6 +770,15 @@ impl ModelClient {
         );
         let prompt_cache_key = Some(self.prompt_cache_key());
         let service_tier = model_info.service_tier_for_request(service_tier);
+        let client_metadata = if provider.name == "OpenAI" || provider.is_azure_responses_endpoint()
+        {
+            Some(HashMap::from([(
+                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
+                self.state.installation_id.clone(),
+            )]))
+        } else {
+            None
+        };
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             instructions: instructions.clone(),
@@ -784,10 +793,7 @@ impl ModelClient {
             service_tier,
             prompt_cache_key,
             text,
-            client_metadata: Some(HashMap::from([(
-                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
-                self.state.installation_id.clone(),
-            )])),
+            client_metadata,
         };
         Ok(request)
     }

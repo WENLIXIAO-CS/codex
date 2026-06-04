@@ -456,3 +456,51 @@ refresh_interval_ms = 0
     assert_eq!(auth.refresh_interval_ms, 0);
     assert_eq!(auth.refresh_interval(), None);
 }
+
+#[test]
+fn test_create_nvidia_provider() {
+    let provider = ModelProviderInfo::create_nvidia_provider();
+    assert_eq!(provider.name, "NVIDIA");
+    assert_eq!(
+        provider.base_url,
+        Some("https://integrate.api.nvidia.com/v1".into())
+    );
+    assert_eq!(provider.env_key, Some("NVIDIA_API_KEY".into()));
+    assert_eq!(
+        provider.http_headers,
+        Some(HashMap::from([
+            (
+                "HTTP-Referer".to_string(),
+                "https://github.com/openai/codex".to_string(),
+            ),
+            ("X-Title".to_string(), "codex".to_string()),
+        ]))
+    );
+    assert!(!provider.requires_openai_auth);
+    assert!(provider.is_nvidia());
+    assert!(!provider.is_nvidia_inference());
+}
+
+#[test]
+fn test_create_nvidia_inference_provider() {
+    let provider = ModelProviderInfo::create_nvidia_inference_provider();
+    assert_eq!(provider.name, "NVIDIA Inference API");
+    assert_eq!(
+        provider.base_url,
+        Some("https://inference-api.nvidia.com/v1".into())
+    );
+    assert_eq!(provider.env_key, Some("NVIDIA_API_KEY".into()));
+    assert_eq!(
+        provider.http_headers,
+        Some(HashMap::from([
+            (
+                "HTTP-Referer".to_string(),
+                "https://github.com/openai/codex".to_string(),
+            ),
+            ("X-Title".to_string(), "codex".to_string()),
+        ]))
+    );
+    assert!(!provider.requires_openai_auth);
+    assert!(!provider.is_nvidia());
+    assert!(provider.is_nvidia_inference());
+}

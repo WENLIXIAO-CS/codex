@@ -311,6 +311,7 @@ impl AppServerSession {
             Some(Account::AmazonBedrock {}) => {
                 (None, None, None, None, FeedbackAudience::External, false)
             }
+            Some(Account::Nvidia {}) => (None, None, None, None, FeedbackAudience::External, false),
             None => (None, None, None, None, FeedbackAudience::External, false),
         };
         Ok(AppServerBootstrap {

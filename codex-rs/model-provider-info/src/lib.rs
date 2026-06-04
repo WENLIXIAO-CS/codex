@@ -46,6 +46,12 @@ const AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_VALUE: &str = "codex";
 const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer supported.\nHow to fix: set `wire_api = \"responses\"` in your provider config.\nMore info: https://github.com/openai/codex/discussions/7782";
 pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
 pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
+const NVIDIA_PROVIDER_NAME: &str = "NVIDIA";
+pub const NVIDIA_PROVIDER_ID: &str = "nvidia";
+pub const NVIDIA_INTEGRATE_API_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_INFERENCE_PROVIDER_NAME: &str = "NVIDIA Inference API";
+pub const NVIDIA_INFERENCE_PROVIDER_ID: &str = "nvidia-inference";
+pub const NVIDIA_INFERENCE_API_BASE_URL: &str = "https://inference-api.nvidia.com/v1";
 
 /// Wire protocol that the provider speaks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
@@ -383,12 +389,80 @@ impl ModelProviderInfo {
         }
     }
 
+    pub fn create_nvidia_provider() -> ModelProviderInfo {
+        ModelProviderInfo {
+            name: NVIDIA_PROVIDER_NAME.into(),
+            base_url: Some(NVIDIA_INTEGRATE_API_BASE_URL.into()),
+            env_key: Some("NVIDIA_API_KEY".into()),
+            env_key_instructions: Some(
+                "Get your NVIDIA API key from https://build.nvidia.com/explore/discover".into(),
+            ),
+            experimental_bearer_token: None,
+            auth: None,
+            aws: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: Some(HashMap::from([
+                (
+                    "HTTP-Referer".to_string(),
+                    "https://github.com/openai/codex".to_string(),
+                ),
+                ("X-Title".to_string(), "codex".to_string()),
+            ])),
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            websocket_connect_timeout_ms: None,
+            requires_openai_auth: false,
+            supports_websockets: false,
+        }
+    }
+
+    pub fn create_nvidia_inference_provider() -> ModelProviderInfo {
+        ModelProviderInfo {
+            name: NVIDIA_INFERENCE_PROVIDER_NAME.into(),
+            base_url: Some(NVIDIA_INFERENCE_API_BASE_URL.into()),
+            env_key: Some("NVIDIA_API_KEY".into()),
+            env_key_instructions: Some(
+                "Get your NVIDIA API key from https://build.nvidia.com/explore/discover".into(),
+            ),
+            experimental_bearer_token: None,
+            auth: None,
+            aws: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: Some(HashMap::from([
+                (
+                    "HTTP-Referer".to_string(),
+                    "https://github.com/openai/codex".to_string(),
+                ),
+                ("X-Title".to_string(), "codex".to_string()),
+            ])),
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            websocket_connect_timeout_ms: None,
+            requires_openai_auth: false,
+            supports_websockets: false,
+        }
+    }
+
     pub fn is_openai(&self) -> bool {
         self.name == OPENAI_PROVIDER_NAME
     }
 
     pub fn is_amazon_bedrock(&self) -> bool {
         self.name == AMAZON_BEDROCK_PROVIDER_NAME
+    }
+
+    pub fn is_nvidia(&self) -> bool {
+        self.name == NVIDIA_PROVIDER_NAME
+    }
+
+    pub fn is_nvidia_inference(&self) -> bool {
+        self.name == NVIDIA_INFERENCE_PROVIDER_NAME
     }
 
     pub fn supports_remote_compaction(&self) -> bool {
@@ -414,10 +488,10 @@ pub fn built_in_model_providers(
     let openai_provider = P::create_openai_provider(openai_base_url);
     let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
 
-    // We do not want to be in the business of adjucating which third-party
-    // providers are bundled with Codex CLI, so we only include the OpenAI and
-    // open source ("oss") providers by default. Users are encouraged to add to
-    // `model_providers` in config.toml to add their own providers.
+    // We do not want to be in the business of adjudicating which third-party
+    // providers are bundled with Codex CLI, so we only include the OpenAI,
+    // open source ("oss"), and NVIDIA providers by default. Users are encouraged
+    // to add to `model_providers` in config.toml to add their own providers.
     [
         (OPENAI_PROVIDER_ID, openai_provider),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
@@ -428,6 +502,11 @@ pub fn built_in_model_providers(
         (
             LMSTUDIO_OSS_PROVIDER_ID,
             create_oss_provider(DEFAULT_LMSTUDIO_PORT, WireApi::Responses),
+        ),
+        (NVIDIA_PROVIDER_ID, P::create_nvidia_provider()),
+        (
+            NVIDIA_INFERENCE_PROVIDER_ID,
+            P::create_nvidia_inference_provider(),
         ),
     ]
     .into_iter()

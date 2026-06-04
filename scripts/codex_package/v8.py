@@ -87,16 +87,37 @@ def fetch_codex_v8_artifacts(
 
 
 def resolved_v8_crate_version() -> str:
-    import tomllib
-
-    cargo_lock = tomllib.loads((REPO_ROOT / "codex-rs" / "Cargo.lock").read_text())
-    versions = sorted(
-        {
-            package["version"]
-            for package in cargo_lock["package"]
-            if package["name"] == "v8"
-        }
-    )
+    cargo_lock_text = (REPO_ROOT / "codex-rs" / "Cargo.lock").read_text()
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        package = {}
+        versions_set = set()
+        for line in cargo_lock_text.splitlines():
+            line = line.strip()
+            if line == "[[package]]":
+                if package.get("name") == "v8":
+                    versions_set.add(package["version"])
+                package = {}
+                continue
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            value = value.strip()
+            if value.startswith('"') and value.endswith('"'):
+                package[key.strip()] = value[1:-1]
+        if package.get("name") == "v8":
+            versions_set.add(package["version"])
+        versions = sorted(versions_set)
+    else:
+        cargo_lock = tomllib.loads(cargo_lock_text)
+        versions = sorted(
+            {
+                package["version"]
+                for package in cargo_lock["package"]
+                if package["name"] == "v8"
+            }
+        )
     if len(versions) != 1:
         raise RuntimeError(
             f"Expected exactly one resolved v8 version, found: {versions}"

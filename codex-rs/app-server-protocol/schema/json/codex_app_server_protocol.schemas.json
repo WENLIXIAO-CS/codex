@@ -3786,8 +3786,8 @@
         "environmentId": {
           "default": null,
           "type": [
-            "null",
-            "string"
+            "string",
+            "null"
           ]
         },
         "itemId": {
@@ -5696,6 +5696,22 @@
               "type"
             ],
             "title": "AmazonBedrockAccount",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "nvidia"
+                ],
+                "title": "NvidiaAccountType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "NvidiaAccount",
             "type": "object"
           }
         ]

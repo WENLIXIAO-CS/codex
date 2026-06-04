@@ -58,6 +58,22 @@
           ],
           "title": "AmazonBedrockAccount",
           "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "nvidia"
+              ],
+              "title": "NvidiaAccountType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "NvidiaAccount",
+          "type": "object"
         }
       ]
     },
